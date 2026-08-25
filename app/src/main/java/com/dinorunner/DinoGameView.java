@@ -856,7 +856,6 @@ public class DinoGameView extends View {
     // ---------------- SONIDO ----------------
 
     private void playTone(boolean jump) {
-
         if (!soundEnabled) {
             return;
         }
@@ -896,7 +895,9 @@ public class DinoGameView extends View {
             );
 
             lastFrameTime = currentTime;
+
             update(deltaTime);
+
             invalidate();
 
             if (state == State.PLAYING) {
