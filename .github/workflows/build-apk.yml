@@ -22,9 +22,10 @@ jobs:
       - name: Instalar Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Compilar APK
-        run: gradle assembleDebug --no-daemon
-
+      - name: Instalar Gradle
+  uses: gradle/actions/setup-gradle@v4
+  with:
+    gradle-version: '8.7'
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
