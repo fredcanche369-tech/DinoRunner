@@ -836,6 +836,7 @@ public class DinoGameView extends View {
 
                     startGame();
 
+    }
                 } else if (
                         y > getHeight() * 0.65f
                                 && y < getHeight() * 0.78f
@@ -877,17 +878,18 @@ public class DinoGameView extends View {
         } else {
 
             toneGenerator.startTone(
-        ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD,
-        180
-);
+                    ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD,
+                    180
+            );
+        }
 
-postDelayed(
-        toneGenerator::release,
-        jump ? 100 : 220
-);
-}
+        postDelayed(
+                toneGenerator::release,
+                jump ? 100 : 220
+        );
+    }
 
-private final Runnable gameLoop = new Runnable() {
+    private final Runnable gameLoop = new Runnable() {
     @Override
     public void run() {
 
@@ -909,7 +911,6 @@ private final Runnable gameLoop = new Runnable() {
         }
     }
 };
-
 private void scheduleGameLoop() {
     postDelayed(gameLoop, 16);
 }
@@ -960,5 +961,3 @@ private static class Obstacle {
         this.height = height;
     }
 }
-
-    }
