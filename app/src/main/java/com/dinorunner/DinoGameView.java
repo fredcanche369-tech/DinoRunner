@@ -876,4 +876,89 @@ public class DinoGameView extends View {
 
         } else {
 
-            toneGenerator.startT
+            toneGenerator.startTone(
+        ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD,
+        180
+);
+
+postDelayed(
+        toneGenerator::release,
+        jump ? 100 : 220
+);
+}
+
+private final Runnable gameLoop = new Runnable() {
+    @Override
+    public void run() {
+
+        long currentTime = SystemClock.uptimeMillis();
+
+        float deltaTime = Math.min(
+                0.035f,
+                (currentTime - lastFrameTime) / 1000f
+        );
+
+        lastFrameTime = currentTime;
+
+        update(deltaTime);
+
+        invalidate();
+
+        if (state == State.PLAYING) {
+            scheduleGameLoop();
+        }
+    }
+};
+
+private void scheduleGameLoop() {
+    postDelayed(gameLoop, 16);
+}
+
+@Override
+protected void onAttachedToWindow() {
+    super.onAttachedToWindow();
+
+    lastFrameTime = SystemClock.uptimeMillis();
+
+    removeCallbacks(gameLoop);
+
+    if (state == State.PLAYING) {
+        scheduleGameLoop();
+    }
+}
+
+public void pauseGame() {
+    removeCallbacks(gameLoop);
+}
+
+public void resumeGame() {
+    lastFrameTime = SystemClock.uptimeMillis();
+
+    removeCallbacks(gameLoop);
+
+    if (state == State.PLAYING) {
+        scheduleGameLoop();
+    }
+}
+
+private static class Obstacle {
+
+    float x;
+    float y;
+    float width;
+    float height;
+
+    Obstacle(
+            float x,
+            float y,
+            float width,
+            float height
+    ) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+    }
+}
+
+    }
