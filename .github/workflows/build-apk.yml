@@ -3,7 +3,9 @@ name: Build Dino Runner APK
 on:
   workflow_dispatch:
   push:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
 
 jobs:
   build:
@@ -19,10 +21,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Instalar Gradle
+      - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-        gradle-version: '8.7'
+          gradle-version: '8.7'
 
       - name: Compilar APK
         run: gradle assembleDebug --no-daemon
