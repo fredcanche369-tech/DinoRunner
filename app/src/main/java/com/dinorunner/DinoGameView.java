@@ -805,66 +805,13 @@ public class DinoGameView extends View {
                         x > getWidth() - 100
                                 && y < 80
                 ) {
-
-                    soundEnabled = !soundEnabled;
-
-                    invalidate();
-
-                } else if (!jumping) {
-
-                    jumping = true;
-
-                    velocityY =
-                            -Math.max(
-                                    760,
-                                    getHeight() * 0.95f
-                            );
-
-                    playTone(true);
-                }
-
-                return true;
-            }
-
-            // GAME OVER.
-            if (state == State.GAME_OVER) {
-
-                if (
-                        y > getHeight() * 0.52f
-                                && y < getHeight() * 0.66f
-                ) {
-
-                    startGame();
-
-                } else if (
-                        y > getHeight() * 0.65f
-                                && y < getHeight() * 0.78f
-                ) {
-
-                    state = State.MENU;
-
-                    invalidate();
-                }
-
-                return true;
-            }
-        }
-
-        return true;
-    }
-
-    // ---------------- SONIDO ----------------
-
     private void playTone(boolean jump) {
         if (!soundEnabled) {
             return;
         }
 
         ToneGenerator toneGenerator =
-                new ToneGenerator(
-                        AudioManager.STREAM_MUSIC,
-                        70
-                );
+                new ToneGenerator(AudioManager.STREAM_MUSIC, 70);
 
         if (jump) {
             toneGenerator.startTone(
@@ -895,9 +842,7 @@ public class DinoGameView extends View {
             );
 
             lastFrameTime = currentTime;
-
             update(deltaTime);
-
             invalidate();
 
             if (state == State.PLAYING) {
