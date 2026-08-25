@@ -805,92 +805,160 @@ public class DinoGameView extends View {
                         x > getWidth() - 100
                                 && y < 80
                 ) {
+
+                    soundEnabled = !soundEnabled;
+
+                    invalidate();
+
+                } else if (!jumping) {
+
+                    jumping = true;
+
+                    velocityY =
+                            -Math.max(
+                                    760,
+                                    getHeight() * 0.95f
+                            );
+
+                    playTone(true);
+                }
+
+                return true;
+            }
+
+            // GAME OVER.
+            if (state == State.GAME_OVER) {
+
+                if (
+                        y > getHeight() * 0.52f
+                                && y < getHeight() * 0.66f
+                ) {
+
+                    startGame();
+
+                } else if (
+                        y > getHeight() * 0.65f
+                                && y < getHeight() * 0.78f
+                ) {
+
+                    state = State.MENU;
+
+                    invalidate();
+                }
+
+                return true;
+            }
+        }
+
+        return true;
+    }
+
+    // ---------------- SONIDO ----------------
+
     private void playTone(boolean jump) {
+
         if (!soundEnabled) {
             return;
         }
 
         ToneGenerator toneGenerator =
-                new ToneGenerator(AudioManager.STREAM_MUSIC, 70);
+                new ToneGenerator(
+                        AudioManager.STREAM_MUSIC,
+                        70
+                );
 
         if (jump) {
+
             toneGenerator.startTone(
                     ToneGenerator.TONE_PROP_BEEP,
                     70
             );
+
         } else {
+
             toneGenerator.startTone(
-                    ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD,
-                    180
-            );
-        }
+        ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD,
+        180
+);
 
-        postDelayed(
-                toneGenerator::release,
-                jump ? 100 : 220
-        );
-    }
+postDelayed(
+        toneGenerator::release,
+        jump ? 100 : 220
+);
+}
 
-    private final Runnable gameLoop = new Runnable() {
-        @Override
-        public void run() {
-            long currentTime = SystemClock.uptimeMillis();
-
-            float deltaTime = Math.min(
-                    0.035f,
-                    (currentTime - lastFrameTime) / 1000f
-            );
-
-            lastFrameTime = currentTime;
-            update(deltaTime);
-            invalidate();
-
-            if (state == State.PLAYING) {
-                scheduleGameLoop();
-            }
-        }
-    };
-
-    private void scheduleGameLoop() {
-        postDelayed(gameLoop, 16);
-    }
-
+private final Runnable gameLoop = new Runnable() {
     @Override
-    protected void onAttachedToWindow() {
-        super.onAttachedToWindow();
+    public void run() {
 
-        lastFrameTime = SystemClock.uptimeMillis();
-        removeCallbacks(gameLoop);
+        long currentTime = SystemClock.uptimeMillis();
 
-        if (state == State.PLAYING) {
-            scheduleGameLoop();
-        }
-    }
+        float deltaTime = Math.min(
+                0.035f,
+                (currentTime - lastFrameTime) / 1000f
+        );
 
-    public void pauseGame() {
-        removeCallbacks(gameLoop);
-    }
+        lastFrameTime = currentTime;
 
-    public void resumeGame() {
-        lastFrameTime = SystemClock.uptimeMillis();
-        removeCallbacks(gameLoop);
+        update(deltaTime);
+
+        invalidate();
 
         if (state == State.PLAYING) {
             scheduleGameLoop();
         }
     }
+};
 
-    private static class Obstacle {
-        float x;
-        float y;
-        float width;
-        float height;
+private void scheduleGameLoop() {
+    postDelayed(gameLoop, 16);
+}
 
-        Obstacle(float x, float y, float width, float height) {
-            this.x = x;
-            this.y = y;
-            this.width = width;
-            this.height = height;
-        }
+@Override
+protected void onAttachedToWindow() {
+    super.onAttachedToWindow();
+
+    lastFrameTime = SystemClock.uptimeMillis();
+
+    removeCallbacks(gameLoop);
+
+    if (state == State.PLAYING) {
+        scheduleGameLoop();
     }
 }
+
+public void pauseGame() {
+    removeCallbacks(gameLoop);
+}
+
+public void resumeGame() {
+    lastFrameTime = SystemClock.uptimeMillis();
+
+    removeCallbacks(gameLoop);
+
+    if (state == State.PLAYING) {
+        scheduleGameLoop();
+    }
+}
+
+private static class Obstacle {
+
+    float x;
+    float y;
+    float width;
+    float height;
+
+    Obstacle(
+            float x,
+            float y,
+            float width,
+            float height
+    ) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+    }
+}
+
+    }
