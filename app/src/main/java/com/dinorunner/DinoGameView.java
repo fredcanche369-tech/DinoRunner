@@ -2,416 +2,878 @@ package com.dinorunner;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.graphics.*;
-import android.media.AudioAttributes;
-import android.media.SoundPool;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.RectF;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.View;
+
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.Random;
 
 public class DinoGameView extends View {
 
-    private enum State { MENU, PLAYING, GAME_OVER }
+    // Estados principales del juego.
+    private enum State {
+        MENU,
+        PLAYING,
+        GAME_OVER
+    }
+
     private State state = State.MENU;
 
-    private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Random random = new Random();
-    private final SharedPreferences prefs;
+    private final SharedPreferences preferences;
 
-    private SoundPool soundPool;
-    private int jumpSound, loseSound;
+    // Sonido sencillo generado por Android.
     private boolean soundEnabled = true;
 
-    private long lastFrame;
-    private long scoreStart;
+    // Tiempo y puntuación.
+    private long lastFrameTime;
     private float score;
     private int bestScore;
 
-    // Posiciones y tamaños se calculan proporcionalmente al ancho/alto.
-    private float groundY;
-    private float dinoX, dinoY, dinoW, dinoH;
+    // Dinosaurio.
+    private float dinoX;
+    private float dinoY;
+    private float dinoWidth;
+    private float dinoHeight;
     private float velocityY;
     private boolean jumping;
+
+    // Suelo y velocidad.
+    private float groundY;
     private float speed;
+
+    // Aparición de obstáculos.
     private float spawnTimer;
 
     private final ArrayList<Obstacle> obstacles = new ArrayList<>();
 
-    private boolean touchWasDown = false;
+    // Para controlar los toques.
+    private boolean touchDown;
+
+    // Colores.
+    private static final int SKY_COLOR = Color.rgb(235, 248, 255);
+    private static final int GROUND_COLOR = Color.rgb(80, 80, 80);
+    private static final int DINO_COLOR = Color.rgb(50, 150, 65);
+    private static final int DINO_DARK_COLOR = Color.rgb(35, 110, 45);
+    private static final int CACTUS_COLOR = Color.rgb(30, 125, 50);
 
     public DinoGameView(Context context) {
         super(context);
+
         setFocusable(true);
 
-        prefs = context.getSharedPreferences("dino_runner", Context.MODE_PRIVATE);
-        bestScore = prefs.getInt("best_score", 0);
-
-        // Los efectos se generan con ToneGenerator; no hacen falta archivos de audio.
-        lastFrame = SystemClock.uptimeMillis();
-    }
-
-    /*
-     * Para mantener el proyecto simple y sin archivos de audio externos,
-     * los tonos se generan como archivos temporales WAV al iniciar.
-     */
-    private int createToneResource(Context context, int freq, int durationMs) {
-        // SoundPool.load() necesita un archivo real. Se usa cacheDir para crearlo.
-        try {
-            java.io.File f = new java.io.File(context.getCacheDir(),
-                    "tone_" + freq + "_" + durationMs + ".wav");
-            if (!f.exists()) {
-                int sampleRate = 22050;
-                int samples = sampleRate * durationMs / 1000;
-                java.io.FileOutputStream out = new java.io.FileOutputStream(f);
-                java.io.DataOutputStream d = new java.io.DataOutputStream(out);
-
-                writeAscii(d, "RIFF");
-                writeLEInt(d, 36 + samples * 2);
-                writeAscii(d, "WAVE");
-                writeAscii(d, "fmt ");
-                writeLEInt(d, 16);
-                writeLEShort(d, (short)1);
-                writeLEShort(d, (short)1);
-                writeLEInt(d, sampleRate);
-                writeLEInt(d, sampleRate * 2);
-                writeLEShort(d, (short)2);
-                writeLEShort(d, (short)16);
-                writeAscii(d, "data");
-                writeLEInt(d, samples * 2);
-
-                for (int i = 0; i < samples; i++) {
-                    double t = i / (double) sampleRate;
-                    double envelope = Math.max(0, 1.0 - i / (double) samples);
-                    short value = (short)(Math.sin(2 * Math.PI * freq * t)
-                            * 0.35 * envelope * 32767);
-                    writeLEShort(d, value);
-                }
-                d.close();
-            }
-            // Return a small numeric handle by storing the path; SoundPool cannot load
-            // arbitrary paths with a resource ID, so this method is replaced below.
-            // This line is never reached in the final initialization.
-            return 0;
-        } catch (Exception e) {
-            return 0;
-        }
-    }
-
-    private void writeAscii(java.io.DataOutputStream d, String s) throws Exception {
-        d.writeBytes(s);
-    }
-    private void writeLEInt(java.io.DataOutputStream d, int v) throws Exception {
-        d.write(v & 255); d.write((v >> 8) & 255); d.write((v >> 16) & 255); d.write((v >> 24) & 255);
-    }
-    private void writeLEShort(java.io.DataOutputStream d, short v) throws Exception {
-        d.write(v & 255); d.write((v >> 8) & 255);
-    }
-
-    // Reemplazamos el sistema anterior por un sonido seguro sin archivos:
-    private void playTone(final boolean jump) {
-        if (!soundEnabled) return;
-        // Un Beep sencillo del sistema evita depender de recursos de audio.
-        android.media.ToneGenerator tg = new android.media.ToneGenerator(
-                android.media.AudioManager.STREAM_MUSIC,
-                70
+        preferences = context.getSharedPreferences(
+                "dino_runner",
+                Context.MODE_PRIVATE
         );
-        tg.startTone(jump
-                ? android.media.ToneGenerator.TONE_PROP_BEEP
-                : android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD,
-                jump ? 70 : 180);
-        postDelayed(tg::release, jump ? 100 : 220);
+
+        bestScore = preferences.getInt("best_score", 0);
+
+        lastFrameTime = SystemClock.uptimeMillis();
     }
 
     @Override
-    protected void onDraw(Canvas c) {
-        super.onDraw(c);
-        float w = getWidth(), h = getHeight();
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
 
-        p.setStyle(Paint.Style.FILL);
-        p.setColor(Color.rgb(245, 245, 245));
-        c.drawRect(0, 0, w, h, p);
+        float width = getWidth();
+        float height = getHeight();
+
+        // Fondo.
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.rgb(245, 245, 245));
+        canvas.drawRect(0, 0, width, height, paint);
 
         if (state == State.MENU) {
-            drawMenu(c, w, h);
+            drawMenu(canvas, width, height);
             return;
         }
 
-        drawGame(c, w, h);
+        drawGame(canvas, width, height);
 
         if (state == State.GAME_OVER) {
-            drawGameOver(c, w, h);
+            drawGameOver(canvas, width, height);
         }
     }
 
-    private void drawMenu(Canvas c, float w, float h) {
-        text(c, "DINO RUNNER", w/2, h*0.25f, 42, Color.rgb(35, 90, 40), true);
-        text(c, "Corre, salta y evita los cactus", w/2, h*0.33f, 19, Color.DKGRAY, false);
+    // ---------------- MENU ----------------
 
-        drawDino(c, w/2 - 40, h*0.48f, 80, 80, false);
+    private void drawMenu(Canvas canvas, float width, float height) {
 
-        button(c, w/2, h*0.68f, w*0.55f, 64, "JUGAR", Color.rgb(46,125,50));
-        text(c, "Mejor: " + bestScore, w/2, h*0.79f, 20, Color.DKGRAY, true);
-        text(c, soundEnabled ? "🔊 Sonido activado" : "🔇 Sonido desactivado",
-                w/2, h*0.87f, 16, Color.DKGRAY, false);
+        drawText(
+                canvas,
+                "DINO RUNNER",
+                width / 2f,
+                height * 0.25f,
+                42,
+                Color.rgb(35, 90, 40),
+                true
+        );
+
+        drawText(
+                canvas,
+                "Corre, salta y evita los cactus",
+                width / 2f,
+                height * 0.33f,
+                18,
+                Color.DKGRAY,
+                false
+        );
+
+        drawDino(
+                canvas,
+                width / 2f - 40,
+                height * 0.48f,
+                80,
+                80,
+                false
+        );
+
+        drawButton(
+                canvas,
+                width / 2f,
+                height * 0.68f,
+                width * 0.55f,
+                64,
+                "JUGAR",
+                Color.rgb(46, 125, 50)
+        );
+
+        drawText(
+                canvas,
+                "Mejor: " + bestScore,
+                width / 2f,
+                height * 0.79f,
+                20,
+                Color.DKGRAY,
+                true
+        );
+
+        drawText(
+                canvas,
+                soundEnabled
+                        ? "Sonido activado"
+                        : "Sonido desactivado",
+                width / 2f,
+                height * 0.87f,
+                16,
+                Color.DKGRAY,
+                false
+        );
     }
 
-    private void drawGame(Canvas c, float w, float h) {
-        groundY = h * 0.78f;
+    // ---------------- JUEGO ----------------
+
+    private void drawGame(
+            Canvas canvas,
+            float width,
+            float height
+    ) {
+
+        groundY = height * 0.78f;
 
         // Cielo.
-        p.setColor(Color.rgb(235, 248, 255));
-        c.drawRect(0, 0, w, groundY, p);
+        paint.setColor(SKY_COLOR);
+        canvas.drawRect(0, 0, width, groundY, paint);
 
-        // Nubes sencillas.
-        p.setColor(Color.WHITE);
-        c.drawCircle(w*0.18f, h*0.20f, 22, p);
-        c.drawCircle(w*0.22f, h*0.19f, 30, p);
-        c.drawCircle(w*0.27f, h*0.20f, 20, p);
+        // Nubes.
+        paint.setColor(Color.WHITE);
+
+        canvas.drawCircle(
+                width * 0.18f,
+                height * 0.20f,
+                22,
+                paint
+        );
+
+        canvas.drawCircle(
+                width * 0.22f,
+                height * 0.19f,
+                30,
+                paint
+        );
+
+        canvas.drawCircle(
+                width * 0.27f,
+                height * 0.20f,
+                20,
+                paint
+        );
 
         // Suelo.
-        p.setColor(Color.rgb(90, 90, 90));
-        c.drawRect(0, groundY, w, groundY + 5, p);
+        paint.setColor(GROUND_COLOR);
+        canvas.drawRect(
+                0,
+                groundY,
+                width,
+                groundY + 5,
+                paint
+        );
 
-        drawDino(c, dinoX, dinoY, dinoW, dinoH, jumping);
+        // Dinosaurio.
+        drawDino(
+                canvas,
+                dinoX,
+                dinoY,
+                dinoWidth,
+                dinoHeight,
+                jumping
+        );
 
-        for (Obstacle o : obstacles) drawCactus(c, o.x, o.y, o.w, o.h);
+        // Obstáculos.
+        for (Obstacle obstacle : obstacles) {
+            drawCactus(
+                    canvas,
+                    obstacle.x,
+                    obstacle.y,
+                    obstacle.width,
+                    obstacle.height
+            );
+        }
 
-        text(c, "Puntos: " + (int)score, 24, 44, 22, Color.DKGRAY, true);
-        text(c, soundEnabled ? "🔊" : "🔇", w - 45, 44, 25, Color.DKGRAY, false);
+        // Puntuación.
+        drawText(
+                canvas,
+                "Puntos: " + (int) score,
+                24,
+                44,
+                22,
+                Color.DKGRAY,
+                true,
+                Paint.Align.LEFT
+        );
+
+        // Sonido.
+        drawText(
+                canvas,
+                soundEnabled ? "SON" : "SIL",
+                width - 25,
+                44,
+                15,
+                Color.DKGRAY,
+                true,
+                Paint.Align.RIGHT
+        );
     }
 
-    private void drawGameOver(Canvas c, float w, float h) {
-        p.setColor(0xB8000000);
-        c.drawRect(0, 0, w, h, p);
+    // ---------------- GAME OVER ----------------
 
-        text(c, "GAME OVER", w/2, h*0.28f, 42, Color.WHITE, true);
-        text(c, "Puntuación: " + (int)score, w/2, h*0.38f, 24, Color.WHITE, true);
-        text(c, "Mejor puntuación: " + bestScore, w/2, h*0.44f, 21, Color.WHITE, false);
+    private void drawGameOver(
+            Canvas canvas,
+            float width,
+            float height
+    ) {
 
-        button(c, w/2, h*0.59f, w*0.62f, 58, "REINTENTAR", Color.rgb(46,125,50));
-        button(c, w/2, h*0.70f, w*0.62f, 58, "MENÚ", Color.rgb(80,80,80));
+        paint.setColor(0xB8000000);
+        canvas.drawRect(0, 0, width, height, paint);
+
+        drawText(
+                canvas,
+                "GAME OVER",
+                width / 2f,
+                height * 0.28f,
+                42,
+                Color.WHITE,
+                true
+        );
+
+        drawText(
+                canvas,
+                "Puntuación: " + (int) score,
+                width / 2f,
+                height * 0.38f,
+                24,
+                Color.WHITE,
+                true
+        );
+
+        drawText(
+                canvas,
+                "Mejor puntuación: " + bestScore,
+                width / 2f,
+                height * 0.44f,
+                21,
+                Color.WHITE,
+                false
+        );
+
+        drawButton(
+                canvas,
+                width / 2f,
+                height * 0.59f,
+                width * 0.62f,
+                58,
+                "REINTENTAR",
+                Color.rgb(46, 125, 50)
+        );
+
+        drawButton(
+                canvas,
+                width / 2f,
+                height * 0.70f,
+                width * 0.62f,
+                58,
+                "MENU",
+                Color.rgb(80, 80, 80)
+        );
     }
 
-    private void drawDino(Canvas c, float x, float y, float w, float h, boolean jumping) {
-        p.setColor(Color.rgb(50, 150, 65));
-        c.drawRoundRect(x, y, x+w*0.70f, y+h*0.75f, 10, 10, p);
-        c.drawRoundRect(x+w*0.45f, y-h*0.20f, x+w, y+h*0.40f, 12, 12, p);
+    // ---------------- DINOSAURIO ----------------
+
+    private void drawDino(
+            Canvas canvas,
+            float x,
+            float y,
+            float width,
+            float height,
+            boolean jumpingNow
+    ) {
+
+        paint.setColor(DINO_COLOR);
+
+        // Cuerpo.
+        canvas.drawRoundRect(
+                new RectF(
+                        x,
+                        y,
+                        x + width * 0.70f,
+                        y + height * 0.75f
+                ),
+                10,
+                10,
+                paint
+        );
+
+        // Cabeza.
+        canvas.drawRoundRect(
+                new RectF(
+                        x + width * 0.45f,
+                        y - height * 0.20f,
+                        x + width,
+                        y + height * 0.40f
+                ),
+                12,
+                12,
+                paint
+        );
 
         // Ojo.
-        p.setColor(Color.WHITE);
-        c.drawCircle(x+w*0.78f, y-h*0.04f, 6, p);
-        p.setColor(Color.BLACK);
-        c.drawCircle(x+w*0.79f, y-h*0.04f, 2.5f, p);
+        paint.setColor(Color.WHITE);
 
-        // Patas con animación sencilla.
-        p.setColor(Color.rgb(35, 110, 45));
-        float legShift = jumping ? 0 : (System.currentTimeMillis()/100)%2==0 ? 5 : -5;
-        c.drawRect(x+w*0.18f, y+h*0.70f, x+w*0.29f, y+h*0.98f, p);
-        c.drawRect(x+w*0.52f, y+h*0.70f+legShift, x+w*0.63f, y+h*0.98f+legShift, p);
+        canvas.drawCircle(
+                x + width * 0.78f,
+                y - height * 0.04f,
+                6,
+                paint
+        );
+
+        paint.setColor(Color.BLACK);
+
+        canvas.drawCircle(
+                x + width * 0.79f,
+                y - height * 0.04f,
+                2.5f,
+                paint
+        );
+
+        // Patas.
+        paint.setColor(DINO_DARK_COLOR);
+
+        float legShift;
+
+        if (jumpingNow) {
+            legShift = 0;
+        } else {
+            long animation = System.currentTimeMillis() / 100;
+            legShift = animation % 2 == 0 ? 5 : -5;
+        }
+
+        canvas.drawRect(
+                x + width * 0.18f,
+                y + height * 0.70f,
+                x + width * 0.29f,
+                y + height * 0.98f,
+                paint
+        );
+
+        canvas.drawRect(
+                x + width * 0.52f,
+                y + height * 0.70f + legShift,
+                x + width * 0.63f,
+                y + height * 0.98f + legShift,
+                paint
+        );
     }
 
-    private void drawCactus(Canvas c, float x, float y, float w, float h) {
-        p.setColor(Color.rgb(30, 125, 50));
-        c.drawRoundRect(x, y, x+w, y+h, 6, 6, p);
-        c.drawRoundRect(x-w*0.65f, y+h*0.35f, x, y+h*0.52f, 6, 6, p);
-        c.drawRoundRect(x+w, y+h*0.20f, x+w*1.65f, y+h*0.38f, 6, 6, p);
-        c.drawRoundRect(x-w*0.45f, y+h*0.20f, x-w*0.25f, y+h*0.43f, 6, 6, p);
+    // ---------------- CACTUS ----------------
+
+    private void drawCactus(
+            Canvas canvas,
+            float x,
+            float y,
+            float width,
+            float height
+    ) {
+
+        paint.setColor(CACTUS_COLOR);
+
+        // Tronco.
+        canvas.drawRoundRect(
+                new RectF(
+                        x,
+                        y,
+                        x + width,
+                        y + height
+                ),
+                6,
+                6,
+                paint
+        );
+
+        // Brazo izquierdo.
+        canvas.drawRoundRect(
+                new RectF(
+                        x - width * 0.65f,
+                        y + height * 0.35f,
+                        x,
+                        y + height * 0.52f
+                ),
+                6,
+                6,
+                paint
+        );
+
+        // Brazo derecho.
+        canvas.drawRoundRect(
+                new RectF(
+                        x + width,
+                        y + height * 0.20f,
+                        x + width * 1.65f,
+                        y + height * 0.38f
+                ),
+                6,
+                6,
+                paint
+        );
+
+        // Brazo superior izquierdo.
+        canvas.drawRoundRect(
+                new RectF(
+                        x - width * 0.45f,
+                        y + height * 0.20f,
+                        x - width * 0.25f,
+                        y + height * 0.43f
+                ),
+                6,
+                6,
+                paint
+        );
     }
 
-    private void button(Canvas c, float cx, float cy, float width, float height,
-                        String label, int color) {
-        p.setColor(color);
-        c.drawRoundRect(cx-width/2, cy-height/2, cx+width/2, cy+height/2, 18, 18, p);
-        text(c, label, cx, cy+8, 21, Color.WHITE, true);
+    // ---------------- BOTONES ----------------
+
+    private void drawButton(
+            Canvas canvas,
+            float centerX,
+            float centerY,
+            float width,
+            float height,
+            String label,
+            int color
+    ) {
+
+        paint.setColor(color);
+
+        canvas.drawRoundRect(
+                new RectF(
+                        centerX - width / 2f,
+                        centerY - height / 2f,
+                        centerX + width / 2f,
+                        centerY + height / 2f
+                ),
+                18,
+                18,
+                paint
+        );
+
+        drawText(
+                canvas,
+                label,
+                centerX,
+                centerY + 8,
+                21,
+                Color.WHITE,
+                true
+        );
     }
 
-    private void text(Canvas c, String s, float x, float y, float size,
-                      int color, boolean bold) {
-        p.setColor(color);
-        p.setTextSize(size);
-        p.setTextAlign(Paint.Align.CENTER);
-        p.setTypeface(bold ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-        c.drawText(s, x, y, p);
+    private void drawText(
+            Canvas canvas,
+            String text,
+            float x,
+            float y,
+            float size,
+            int color,
+            boolean bold
+    ) {
+
+        drawText(
+                canvas,
+                text,
+                x,
+                y,
+                size,
+                color,
+                bold,
+                Paint.Align.CENTER
+        );
     }
+
+    private void drawText(
+            Canvas canvas,
+            String text,
+            float x,
+            float y,
+            float size,
+            int color,
+            boolean bold,
+            Paint.Align align
+    ) {
+
+        paint.setColor(color);
+        paint.setTextSize(size);
+        paint.setTextAlign(align);
+
+        paint.setTypeface(
+                bold
+                        ? android.graphics.Typeface.DEFAULT_BOLD
+                        : android.graphics.Typeface.DEFAULT
+        );
+
+        canvas.drawText(
+                text,
+                x,
+                y,
+                paint
+        );
+    }
+
+    // ---------------- INICIAR JUEGO ----------------
 
     private void startGame() {
+
         state = State.PLAYING;
+
         score = 0;
-        speed = Math.max(420, getWidth() * 0.45f);
+
+        speed = Math.max(
+                420,
+                getWidth() * 0.45f
+        );
+
         spawnTimer = 0;
+
         obstacles.clear();
 
-        dinoW = Math.max(60, getWidth() * 0.13f);
-        dinoH = dinoW;
+        dinoWidth = Math.max(
+                60,
+                getWidth() * 0.13f
+        );
+
+        dinoHeight = dinoWidth;
+
         groundY = getHeight() * 0.78f;
+
         dinoX = getWidth() * 0.14f;
-        dinoY = groundY - dinoH;
+
+        dinoY = groundY - dinoHeight;
 
         velocityY = 0;
+
         jumping = false;
-        scoreStart = SystemClock.uptimeMillis();
-        lastFrame = SystemClock.uptimeMillis();
+
+        lastFrameTime = SystemClock.uptimeMillis();
+
         invalidate();
+
+        removeCallbacks(gameLoop);
+        scheduleGameLoop();
     }
+
+    // ---------------- GAME OVER ----------------
 
     private void gameOver() {
+
         state = State.GAME_OVER;
-        int finalScore = (int)score;
+
+        int finalScore = (int) score;
+
         if (finalScore > bestScore) {
+
             bestScore = finalScore;
-            prefs.edit().putInt("best_score", bestScore).apply();
+
+            preferences
+                    .edit()
+                    .putInt("best_score", bestScore)
+                    .apply();
         }
+
         playTone(false);
+
+        removeCallbacks(gameLoop);
+
         invalidate();
     }
 
-    private void update(float dt) {
-        if (state != State.PLAYING) return;
+    // ---------------- ACTUALIZACIÓN ----------------
 
-        // La velocidad aumenta gradualmente.
-        speed += dt * 7.0f;
+    private void update(float deltaTime) {
 
-        score += dt * 10.0f;
+        if (state != State.PLAYING) {
+            return;
+        }
+
+        // Aumentar velocidad poco a poco.
+        speed += deltaTime * 7.0f;
+
+        // Aumentar puntuación.
+        score += deltaTime * 10.0f;
 
         // Física del salto.
         if (jumping) {
-            velocityY += 1900f * dt;
-            dinoY += velocityY * dt;
 
-            if (dinoY >= groundY - dinoH) {
-                dinoY = groundY - dinoH;
+            velocityY += 1900f * deltaTime;
+
+            dinoY += velocityY * deltaTime;
+
+            if (dinoY >= groundY - dinoHeight) {
+
+                dinoY = groundY - dinoHeight;
+
                 velocityY = 0;
+
                 jumping = false;
             }
         }
 
-        // Crear cactus a intervalos variables.
-        spawnTimer -= dt;
-        if (spawnTimer <= 0) {
-            float cw = Math.max(24, getWidth() * 0.055f);
-            float ch = cw * (1.5f + random.nextFloat() * 0.9f);
-            obstacles.add(new Obstacle(getWidth()+30, groundY-ch, cw, ch));
+        // Crear cactus.
+        spawnTimer -= deltaTime;
 
-            float minDelay = Math.max(0.65f, 1.15f - speed/2200f);
-            spawnTimer = minDelay + random.nextFloat() * 0.75f;
+        if (spawnTimer <= 0) {
+
+            float cactusWidth = Math.max(
+                    24,
+                    getWidth() * 0.055f
+            );
+
+            float cactusHeight =
+                    cactusWidth *
+                    (1.5f + random.nextFloat() * 0.9f);
+
+            obstacles.add(
+                    new Obstacle(
+                            getWidth() + 30,
+                            groundY - cactusHeight,
+                            cactusWidth,
+                            cactusHeight
+                    )
+            );
+
+            float minimumDelay = Math.max(
+                    0.65f,
+                    1.15f - speed / 2200f
+            );
+
+            spawnTimer =
+                    minimumDelay +
+                    random.nextFloat() * 0.75f;
         }
 
-        Iterator<Obstacle> it = obstacles.iterator();
-        while (it.hasNext()) {
-            Obstacle o = it.next();
-            o.x -= speed * dt;
-            if (o.x + o.w*1.7f < 0) {
-                it.remove();
-            } else if (collides(o)) {
+        Iterator<Obstacle> iterator =
+                obstacles.iterator();
+
+        while (iterator.hasNext()) {
+
+            Obstacle obstacle =
+                    iterator.next();
+
+            obstacle.x -= speed * deltaTime;
+
+            if (obstacle.x + obstacle.width * 1.7f < 0) {
+
+                iterator.remove();
+
+            } else if (collides(obstacle)) {
+
                 gameOver();
+
                 return;
             }
         }
     }
 
-    private boolean collides(Obstacle o) {
-        // Hitboxes un poco más pequeñas para que el juego se sienta justo.
-        float dx1 = dinoX + dinoW*0.18f;
-        float dy1 = dinoY + dinoH*0.15f;
-        float dx2 = dinoX + dinoW*0.86f;
-        float dy2 = dinoY + dinoH*0.92f;
+    // ---------------- COLISIÓN ----------------
 
-        float ox1 = o.x - o.w*0.25f;
-        float oy1 = o.y;
-        float ox2 = o.x + o.w*1.55f;
-        float oy2 = o.y + o.h;
+    private boolean collides(Obstacle obstacle) {
 
-        return dx1 < ox2 && dx2 > ox1 && dy1 < oy2 && dy2 > oy1;
+        float dinoLeft =
+                dinoX + dinoWidth * 0.18f;
+
+        float dinoTop =
+                dinoY + dinoHeight * 0.15f;
+
+        float dinoRight =
+                dinoX + dinoWidth * 0.86f;
+
+        float dinoBottom =
+                dinoY + dinoHeight * 0.92f;
+
+        float obstacleLeft =
+                obstacle.x - obstacle.width * 0.25f;
+
+        float obstacleTop =
+                obstacle.y;
+
+        float obstacleRight =
+                obstacle.x + obstacle.width * 1.55f;
+
+        float obstacleBottom =
+                obstacle.y + obstacle.height;
+
+        return dinoLeft < obstacleRight
+                && dinoRight > obstacleLeft
+                && dinoTop < obstacleBottom
+                && dinoBottom > obstacleTop;
     }
 
+    // ---------------- TOQUES ----------------
+
     @Override
-    public boolean onTouchEvent(MotionEvent e) {
-        if (e.getAction() == MotionEvent.ACTION_DOWN) {
-            touchWasDown = true;
+    public boolean onTouchEvent(MotionEvent event) {
+
+        if (event.getAction() == MotionEvent.ACTION_DOWN) {
+
+            touchDown = true;
+
             return true;
         }
 
-        if (e.getAction() == MotionEvent.ACTION_UP && touchWasDown) {
-            touchWasDown = false;
-            float x = e.getX();
-            float y = e.getY();
+        if (
+                event.getAction() == MotionEvent.ACTION_UP
+                        && touchDown
+        ) {
 
+            touchDown = false;
+
+            float x = event.getX();
+            float y = event.getY();
+
+            // MENÚ.
             if (state == State.MENU) {
-                if (y > getHeight()*0.58f && y < getHeight()*0.75f) {
+
+                if (
+                        y > getHeight() * 0.58f
+                                && y < getHeight() * 0.75f
+                ) {
+
                     startGame();
-                } else if (y > getHeight()*0.82f) {
+
+                } else if (y > getHeight() * 0.82f) {
+
                     soundEnabled = !soundEnabled;
+
                     invalidate();
                 }
+
                 return true;
             }
 
+            // JUEGO.
             if (state == State.PLAYING) {
-                if (x > getWidth()-100 && y < 80) {
+
+                // Botón de sonido.
+                if (
+                        x > getWidth() - 100
+                                && y < 80
+                ) {
+
                     soundEnabled = !soundEnabled;
+
                     invalidate();
+
                 } else if (!jumping) {
+
                     jumping = true;
-                    velocityY = -Math.max(760, getHeight()*0.95f);
+
+                    velocityY =
+                            -Math.max(
+                                    760,
+                                    getHeight() * 0.95f
+                            );
+
                     playTone(true);
                 }
+
                 return true;
             }
 
+            // GAME OVER.
             if (state == State.GAME_OVER) {
-                if (y > getHeight()*0.52f && y < getHeight()*0.66f) {
+
+                if (
+                        y > getHeight() * 0.52f
+                                && y < getHeight() * 0.66f
+                ) {
+
                     startGame();
-                } else if (y > getHeight()*0.65f && y < getHeight()*0.78f) {
+
+                } else if (
+                        y > getHeight() * 0.65f
+                                && y < getHeight() * 0.78f
+                ) {
+
                     state = State.MENU;
+
                     invalidate();
                 }
+
                 return true;
             }
         }
+
         return true;
     }
 
-    private final Runnable gameLoop = new Runnable() {
-        @Override public void run() {
-            long now = SystemClock.uptimeMillis();
-            float dt = Math.min(0.035f, (now - lastFrame)/1000f);
-            lastFrame = now;
+    // ---------------- SONIDO ----------------
 
-            update(dt);
-            invalidate();
+    private void playTone(boolean jump) {
 
-            if (state == State.PLAYING) postOnAnimation(this);
+        if (!soundEnabled) {
+            return;
         }
-    };
 
-    private void postOnAnimation(Runnable r) {
-        postDelayed(r, 16);
-    }
+        ToneGenerator toneGenerator =
+                new ToneGenerator(
+                        AudioManager.STREAM_MUSIC,
+                        70
+                );
 
-    @Override protected void onAttachedToWindow() {
-        super.onAttachedToWindow();
-        lastFrame = SystemClock.uptimeMillis();
-        removeCallbacks(gameLoop);
-        postOnAnimation(gameLoop);
-    }
+        if (jump) {
 
-    public void pauseGame() {
-        removeCallbacks(gameLoop);
-    }
+            toneGenerator.startTone(
+                    ToneGenerator.TONE_PROP_BEEP,
+                    70
+            );
 
-    public void resumeGame() {
-        lastFrame = SystemClock.uptimeMillis();
-        removeCallbacks(gameLoop);
-        postOnAnimation(gameLoop);
-    }
+        } else {
 
-    private static class Obstacle {
-        float x, y, w, h;
-        Obstacle(float x, float y, float w, float h) {
-            this.x=x; this.y=y; this.w=w; this.h=h;
-        }
-    }
-}
+            toneGenerator.startT
